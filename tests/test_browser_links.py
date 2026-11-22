@@ -1760,7 +1760,10 @@ def scan(client: TestClient, token: str, name: str = "Pixel Scan", kind: str = "
 @needs_db
 def test_a_device_that_scans_the_qr_code_is_paired_at_once(client: TestClient, me: dict[str, str]) -> None:
     offered = client.post(f"{AGENT}/offers", headers=me)
-    assert offered.status_code == 200 and set(offered.json()) == {"id", "token", "expires_in"} and offered.json()["expires_in"] == 600
+    assert offered.status_code == 200 and set(offered.json()) == {"id", "token", "expires_in", "cloud"} and offered.json()["expires_in"] == 600
+    # The QR code names this cloud's public address, for the device to pair there.
+    assert offered.json()["cloud"] == "http://testserver"
+    assert client.post(f"{AGENT}/offers", headers={**me, "X-Forwarded-Proto": "https", "X-Forwarded-Host": "wysebee.example"}).json()["cloud"] == "https://wysebee.example"
     offer_id, token = offered.json()["id"], offered.json()["token"]
     assert client.get(f"{AGENT}/offers/{offer_id}", headers=me).json()["state"] == "waiting"
     r, s = scan(client, token)

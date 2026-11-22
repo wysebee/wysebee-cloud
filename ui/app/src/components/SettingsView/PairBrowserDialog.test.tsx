@@ -230,13 +230,15 @@ describe("PairBrowserDialog", () => {
   it("shows a phone a QR code to scan, and says which agent was made once it did (2026-11-17)", async () => {
     let state: unknown = { state: "waiting", expires_in: 500 };
     const f = mockFetch([
-      ["POST /api/v1/browser-links/offers", { id: "o1", token: "T".repeat(43), expires_in: 600 }],
+      ["POST /api/v1/browser-links/offers", { id: "o1", token: "T".repeat(43), expires_in: 600, cloud: "https://cloud.example/" }],
       [/^GET \/api\/v1\/browser-links\/offers\/o1/, () => state],
     ]);
     const props = { onClose: vi.fn(), onPaired: vi.fn(), onOpenAgent: vi.fn() };
     render(<PairBrowserDialog kind="android" pollMs={5} {...props} />);
     screen.getByRole("dialog", { name: "Pair an Android phone" });
     expect(await screen.findByRole("img", { name: "QR code for pairing an Android phone" })).toBeTruthy();
+    // It names the cloud's own public address, which the phone pairs with (2026-11-22).
+    expect(screen.getByText("Server: https://cloud.example")).toBeTruthy();
     // The code field stays, for a phone that cannot scan.
     expect(screen.getByLabelText("Pairing code")).toBeTruthy();
     await waitFor(() => expect(f.calls.filter((c) => c.path === "/api/v1/browser-links/offers/o1").length).toBeGreaterThan(1));

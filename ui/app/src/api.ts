@@ -694,6 +694,8 @@ export interface PairingOffer {
   id: string;
   token: string;
   expires_in: number;
+  /** This cloud's public address, which the QR code names: the device pairs there. */
+  cloud?: string;
 }
 
 /** How an offer stands: waiting for a device, paired (with the agent made), or run out. */
@@ -715,8 +717,8 @@ export async function fetchPairingOffer(id: string): Promise<PairingOfferState> 
   return res.json() as Promise<PairingOfferState>;
 }
 
-/** What a pairing QR code says (wysebee-agent-android's docs/protocol.md): the offer's token,
- * and where it was shown, for the device to say when it pairs with another cloud. */
+/** What a pairing QR code says: the offer's token, and the cloud it was made by — the device
+ * pairs with that cloud (2026-11-22). */
 export function pairingQrText(token: string, from: string): string {
   return `wysebee-agent:pair?offer=${encodeURIComponent(token)}&from=${encodeURIComponent(from)}`;
 }

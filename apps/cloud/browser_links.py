@@ -116,7 +116,7 @@ from apps.cloud.auth import User, current_user
 from apps.cloud.config import Settings
 from apps.cloud.asset_storage import AssetStore
 from apps.cloud.models import AgentLinkOffer, AgentSkill, BrowserCall, BrowserLink, CloudSkillFile, UserAgent
-from apps.cloud.relay import RECHECK_SECONDS, RelayHub, _notify, _wait
+from apps.cloud.relay import RECHECK_SECONDS, RelayHub, _notify, _wait, public_base
 
 logger = logging.getLogger("wysebee.cloud.browser_links")
 
@@ -729,8 +729,10 @@ async def claim(request: Request, user: User = Depends(current_user)) -> dict[st
 @links.post("/offers")
 async def make_offer(request: Request, user: User = Depends(current_user)) -> dict[str, Any]:
     """A pairing offered here, for a device to scan as a QR code (2026-11-17): ``{id, token,
-    expires_in}``. Wysebee shows the token as a QR code; a device that starts pairing with it is
-    claimed for this person at once. One use, ten minutes; at most five open at once."""
+    expires_in, cloud}``. Wysebee shows the token as a QR code; a device that starts pairing with
+    it is claimed for this person at once. One use, ten minutes; at most five open at once.
+    ``cloud`` is this site's public address (``public_url``, else the request's forwarded host):
+    the QR code names it, and the device pairs there (2026-11-22)."""
     state = request.app.state
     s: Settings = state.settings
     now = _now()
@@ -742,7 +744,7 @@ async def make_offer(request: Request, user: User = Depends(current_user)) -> di
         if len(mine) >= MAX_OFFERS:
             await session.execute(delete(AgentLinkOffer).where(AgentLinkOffer.id.in_(mine[MAX_OFFERS - 1:])))
         session.add(offer)
-    return {"id": offer.id, "token": token, "expires_in": int(s.browser_link_code_seconds)}
+    return {"id": offer.id, "token": token, "expires_in": int(s.browser_link_code_seconds), "cloud": public_base(request)}
 
 
 @links.get("/offers/{offer_id}")

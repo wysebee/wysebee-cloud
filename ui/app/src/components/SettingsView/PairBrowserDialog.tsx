@@ -48,14 +48,15 @@ export const OFFER_POLL_MS = 2000;
 /**
  * **A QR code a phone scans to pair** (2026-11-17, the person's call: typing the phone's code
  * here was inconvenient): an offer from the cloud, one use for ten minutes, shown as a QR code.
- * Wysebee Agent on the phone scans it and is paired at once under the name typed there; the
+ * Wysebee Agent on the phone scans it — and pairs with the server it names, which the dialog
+ * shows (2026-11-22) — and is paired at once under the name typed there after the scan; the
  * dialog asks every {@link OFFER_POLL_MS} until then and says which agent was made. Run out, it
  * offers a new one. The code field stays below it, for a phone that cannot scan.
  */
 export function PairingQr({ onPaired, pollMs = OFFER_POLL_MS }: { onPaired: (agent: { name: string; label: string }) => void; pollMs?: number }) {
   const { t } = useTranslation();
   const area = `${AREA.android}.pairDialog`;
-  const [offer, setOffer] = useState<{ id: string; token: string } | null>(null);
+  const [offer, setOffer] = useState<{ id: string; token: string; cloud: string } | null>(null);
   const [state, setState] = useState<"making" | "waiting" | "expired" | "failed">("making");
   const [round, setRound] = useState(0);
   const paired = useRef(onPaired);
@@ -82,7 +83,8 @@ export function PairingQr({ onPaired, pollMs = OFFER_POLL_MS }: { onPaired: (age
     offerPairing().then(
       (made) => {
         if (!live) return;
-        setOffer({ id: made.id, token: made.token });
+        // The cloud's own public address (its public_url), not this page's: a phone pairs there.
+        setOffer({ id: made.id, token: made.token, cloud: (made.cloud || window.location.origin).replace(/\/+$/, "") });
         setState("waiting");
         ask(made.id);
       },
@@ -98,7 +100,10 @@ export function PairingQr({ onPaired, pollMs = OFFER_POLL_MS }: { onPaired: (age
     <div className="flex flex-col items-center gap-2 rounded-md border border-stone-200 p-3 text-center dark:border-stone-700">
       <div className="text-sm font-medium">{t(`${area}.qrTitle`)}</div>
       {state === "waiting" && offer ? (
-        <QrCode text={pairingQrText(offer.token, window.location.origin)} label={t(`${area}.qrAlt`)} />
+        <>
+          <QrCode text={pairingQrText(offer.token, offer.cloud)} label={t(`${area}.qrAlt`)} />
+          <div className={cn(muted, "text-xs break-all")}>{t(`${area}.qrServer`, { url: offer.cloud })}</div>
+        </>
       ) : (
         <div className="flex h-[184px] w-[184px] items-center justify-center rounded-md bg-stone-100 p-3 text-xs dark:bg-stone-800">
           {state === "making" ? t(`${area}.qrLoading`) : state === "expired" ? t(`${area}.qrExpired`) : t(`${area}.qrFailed`)}
