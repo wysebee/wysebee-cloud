@@ -253,6 +253,21 @@ async def move(session: AsyncSession, workspace_id: str, source_path: str, to: s
             page.title = title_of(data, to)
 
 
+async def move_to(session: AsyncSession, store: WorkspaceStore, sub: str, workspace_id: str, path: str, to_workspace: str, to: str) -> None:
+    """A file or a folder moved, maybe to another of the person's workspaces: the pages of what
+    it holds follow, keeping their ids and addresses, public links too (the caller commits). A
+    page kept in ``.pages`` moves to the new workspace's; one made directly moved with its file."""
+    pages = await _pages_under(session, workspace_id, path)
+    page = await session.scalar(select(WorkspacePage).where(WorkspacePage.workspace_id == workspace_id, WorkspacePage.source_path == path))
+    for page in ([page] if page is not None else []) + pages:
+        if page.kind != "file" and to_workspace != workspace_id:
+            data = await store.read(sub, key(workspace_id, page.page_id))
+            if data is not None:
+                await store.write(sub, key(to_workspace, page.page_id), data, "text/html; charset=utf-8")
+                await store.delete(sub, key(workspace_id, page.page_id))
+        page.workspace_id, page.source_path = to_workspace, to + page.source_path[len(path) :]
+
+
 async def move_under(session: AsyncSession, workspace_id: str, folder: str, to: str) -> None:
     """A folder renamed: the pages of its documents follow them, keeping their ids and
     addresses (the caller commits). A page made directly moved with its file; one in ``.pages``

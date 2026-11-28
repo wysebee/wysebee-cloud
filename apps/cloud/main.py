@@ -38,7 +38,7 @@ from apps.cloud.tasks import router as tasks_router
 from apps.cloud.db import Database, raise_if_cancelled
 from apps.cloud.envelope import make_kek
 from apps.cloud.notifications import router as notifications_router
-from apps.cloud import page_tools, skill_changes, task_runner, workspace_pages
+from apps.cloud import menu_orders, page_tools, skill_changes, task_runner, workspace_pages
 from apps.cloud.mock_auth import MockAuth, localhost_cors
 from apps.cloud.mock_auth import router as mock_auth_router
 from apps.cloud.relay import RelayHub
@@ -165,6 +165,7 @@ api.include_router(workspace_pages.router)
 # Pages run the person's tools, as their owner allows (apps/cloud/page_tools.py).
 api.include_router(page_tools.router)
 api.include_router(workspaces_router, dependencies=paid)
+api.include_router(menu_orders.router, dependencies=paid)
 api.include_router(workspace_assistant_router, dependencies=paid)
 api.include_router(config_events_router)
 api.include_router(tasks_router, dependencies=paid)

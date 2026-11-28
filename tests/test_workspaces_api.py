@@ -49,6 +49,7 @@ def users(migrated_db_url: str) -> Iterator[list[str]]:
     engine = create_engine(migrated_db_url)
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM user_workspaces WHERE user_id = ANY(:u)"), {"u": subs})
+        conn.execute(text("DELETE FROM menu_orders WHERE user_id = ANY(:u)"), {"u": subs})
     engine.dispose()
 
 
@@ -236,4 +237,123 @@ def test_a_file_is_renamed_where_it_is(client, users):
     assert rename("nope.md", "x.md").status_code == 404
     assert rename("guide", "x").status_code == 404
     assert rename("Other.md", "x.md", who=b).status_code == 404
+
+
+def orders(client, sub, menu="workspaces"):
+    r = client.get(f"/api/v1/menu-orders/{menu}", headers=h(sub))
+    assert r.status_code == 200, r.text
+    return r.json()["orders"]
+
+
+def keep(client, sub, scope, keys, menu="workspaces"):
+    return client.put(f"/api/v1/menu-orders/{menu}", json={"scope": scope, "keys": keys}, headers=h(sub))
+
+
+@needs_db
+def test_a_menu_keeps_the_order_its_items_were_dragged_into(client, users):
+    a, b = users
+    assert orders(client, a) == {}
+    r = keep(client, a, "", ["w2", "w1"])
+    assert (r.status_code, r.json()) == (200, {"scope": "", "keys": ["w2", "w1"]})
+    assert keep(client, a, "w1/guide", ["b.md", "a.md"]).status_code == 200
+    assert keep(client, a, "", ["w1", "w2"]).status_code == 200
+    assert orders(client, a) == {"": ["w1", "w2"], "w1/guide": ["b.md", "a.md"]}
+    # Each person's, each menu's own.
+    assert orders(client, b) == {} and orders(client, a, "tasks") == {}
+    # An empty list forgets it (and forgetting none is fine).
+    assert keep(client, a, "w1/guide", []).status_code == 200
+    assert keep(client, a, "w1/none", []).status_code == 200
+    assert orders(client, a) == {"": ["w1", "w2"]}
+    # Refused: a repeat, an empty key, a menu that cannot be one.
+    assert keep(client, a, "", ["w1", "w1"]).status_code == 422
+    assert keep(client, a, "", [""]).status_code == 422
+    assert keep(client, a, "", ["x"], menu="Bad Menu").status_code == 422
+
+
+@needs_db
+def test_a_file_or_folder_moves_into_a_folder_with_all_it_holds(client, users):
+    a, b = users
+    w = create(client, a).json()["id"]
+    base = f"/api/v1/workspaces/{w}"
+    for path in ("guide/setup.md", "guide/deep/more.md", "notes.md"):
+        assert client.put(f"{base}/files/{path}", json={"content": path}, headers=h(a)).status_code == 200
+    assert client.post(f"{base}/folders/archive", headers=h(a)).status_code == 201
+    move = lambda path, to_folder="", to_workspace=None, who=a: client.post(  # noqa: E731
+        f"{base}/move", json={"path": path, "to_folder": to_folder, **({"to_workspace": to_workspace} if to_workspace else {})}, headers=h(who)
+    )
+    assert keep(client, a, w, ["notes.md", "guide", "archive"]).status_code == 200
+    assert keep(client, a, f"{w}/guide", ["setup.md"]).status_code == 200
+    assert keep(client, a, f"{w}/guide/deep", ["more.md"]).status_code == 200
+
+    # A folder into another: all it holds goes; its orders go with it; it leaves its list.
+    assert move("guide", "archive").json() == {"workspace_id": w, "path": "archive/guide"}
+    tree = client.get(base, headers=h(a)).json()
+    assert [f["path"] for f in tree["files"]] == ["README.md", "archive/guide/deep/more.md", "archive/guide/setup.md", "notes.md"]
+    assert tree["folders"] == ["archive", "archive/guide", "archive/guide/deep"]
+    assert orders(client, a) == {w: ["notes.md", "archive"], f"{w}/archive/guide": ["setup.md"], f"{w}/archive/guide/deep": ["more.md"]}
+    # A file into a folder; back to the top. The folder it left stays, empty.
+    assert move("archive/guide/setup.md", "archive").json() == {"workspace_id": w, "path": "archive/setup.md"}
+    assert move("archive/guide/deep/more.md").json() == {"workspace_id": w, "path": "more.md"}
+    assert "archive/guide/deep" in client.get(base, headers=h(a)).json()["folders"]
+    # Where it is already: nothing moves.
+    assert move("notes.md").json() == {"workspace_id": w, "path": "notes.md"}
+    # Refused: into itself or a folder in it; a name taken there, whatever its case; a folder
+    # not there, or a file named as one; not there; another person's; not a path.
+    assert move("archive", "archive").status_code == 422
+    assert move("archive", "archive/guide").status_code == 422
+    assert client.post(f"{base}/folders/archive/NOTES.md", headers=h(a)).status_code == 201
+    assert move("notes.md", "archive").status_code == 409
+    assert move("notes.md", "nope").status_code == 404
+    assert move("notes.md", "README.md").status_code == 404
+    assert move("nope.md").status_code == 404
+    assert move("notes.md", who=b).status_code == 404
+    assert client.post(f"{base}/move", json={"path": "notes.md", "to_folder": "a/../b"}, headers=h(a)).status_code == 422
+    assert "notes.md" in [f["path"] for f in client.get(base, headers=h(a)).json()["files"]]
+
+
+@needs_db
+def test_a_file_or_folder_moves_to_another_workspace(client, users):
+    a, b = users
+    one, two = create(client, a, "One").json()["id"], create(client, a, "Two").json()["id"]
+    for path in ("guide/setup.md", "guide/deep/more.md"):
+        assert client.put(f"/api/v1/workspaces/{one}/files/{path}", json={"content": path}, headers=h(a)).status_code == 200
+    assert client.post(f"/api/v1/workspaces/{two}/folders/inbox", headers=h(a)).status_code == 201
+    assert keep(client, a, f"{one}/guide", ["setup.md", "deep"]).status_code == 200
+    move = lambda path, to_folder="", to=two: client.post(f"/api/v1/workspaces/{one}/move", json={"path": path, "to_folder": to_folder, "to_workspace": to}, headers=h(a))  # noqa: E731
+
+    assert move("guide", "inbox").json() == {"workspace_id": two, "path": "inbox/guide"}
+    assert [f["path"] for f in client.get(f"/api/v1/workspaces/{one}", headers=h(a)).json()["files"]] == ["README.md"]
+    assert [f["path"] for f in client.get(f"/api/v1/workspaces/{two}", headers=h(a)).json()["files"]] == ["README.md", "inbox/guide/deep/more.md", "inbox/guide/setup.md"]
+    assert orders(client, a) == {f"{two}/inbox/guide": ["setup.md", "deep"]}
+    # Its README is a name taken there; the workspace's file limit holds; another person's
+    # workspace is not there.
+    assert client.post(f"/api/v1/workspaces/{two}/move", json={"path": "README.md", "to_workspace": one}, headers=h(a)).status_code == 409
+    for n in range(2):
+        assert client.put(f"/api/v1/workspaces/{one}/files/f{n}.md", json={"content": "x"}, headers=h(a)).status_code == 200
+    assert client.post(f"/api/v1/workspaces/{two}/move", json={"path": "inbox", "to_workspace": one}, headers=h(a)).status_code == 409
+    other = create(client, b, "Theirs").json()["id"]
+    assert move("f0.md", to=other).status_code == 404
+
+
+@needs_db
+def test_renaming_or_deleting_keeps_the_menu_order_in_step(client, users):
+    a, _ = users
+    w = create(client, a).json()["id"]
+    base = f"/api/v1/workspaces/{w}"
+    for path in ("guide/setup.md", "guide/deep/more.md", "notes.md"):
+        assert client.put(f"{base}/files/{path}", json={"content": path}, headers=h(a)).status_code == 200
+    assert keep(client, a, "", [w, "other"]).status_code == 200
+    assert keep(client, a, w, ["notes.md", "guide", "README.md"]).status_code == 200
+    assert keep(client, a, f"{w}/guide", ["setup.md", "deep"]).status_code == 200
+    assert keep(client, a, f"{w}/guide/deep", ["more.md"]).status_code == 200
+    # Renamed: its place kept under its new name, its folders' orders under the new path.
+    assert client.patch(f"{base}/files/notes.md", json={"name": "Notes.md"}, headers=h(a)).status_code == 200
+    assert client.patch(f"{base}/folders/guide", json={"name": "Handbook"}, headers=h(a)).status_code == 200
+    assert orders(client, a) == {"": [w, "other"], w: ["Notes.md", "Handbook", "README.md"], f"{w}/Handbook": ["setup.md", "deep"], f"{w}/Handbook/deep": ["more.md"]}
+    # Deleted: gone from its list, and its folders' orders with it.
+    assert client.delete(f"{base}/files/Handbook/setup.md", headers=h(a)).status_code == 204
+    assert client.delete(f"{base}/folders/Handbook/deep", headers=h(a)).status_code == 204
+    assert orders(client, a) == {"": [w, "other"], w: ["Notes.md", "Handbook", "README.md"], f"{w}/Handbook": []}
+    assert client.delete(base, headers=h(a)).status_code == 204
+    assert orders(client, a) == {"": ["other"]}
 

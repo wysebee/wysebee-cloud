@@ -1350,6 +1350,23 @@ export async function deleteWorkspaceFolder(id: string, path: string): Promise<v
   return authedDelete(`${workspaceUrl(id)}/folders/${workspacePath(path)}`);
 }
 
+/** Move a file or a folder into a folder (`""` the top) of this workspace or another of the
+ * person's (2026-11-28); where it is now. Its pages, and any link to them, stay the same. */
+export async function moveWorkspaceItem(id: string, path: string, toWorkspace: string, toFolder: string): Promise<{ workspace_id: string; path: string }> {
+  return authedPost(`${workspaceUrl(id)}/move`, { path, to_workspace: toWorkspace, to_folder: toFolder });
+}
+
+// --- Menu orders (2026-11-28): the order the person dragged a menu's items into, per scope
+// (apps/cloud/menu_orders.py). Shared by every menu that can be dragged.
+
+export function fetchMenuOrders(menu: string): Promise<{ orders: Record<string, string[]> }> {
+  return authedGet(`/api/v1/menu-orders/${encodeURIComponent(menu)}`);
+}
+
+export function putMenuOrder(menu: string, scope: string, keys: string[]): Promise<{ scope: string; keys: string[] }> {
+  return authedPut(`/api/v1/menu-orders/${encodeURIComponent(menu)}`, { scope, keys });
+}
+
 /** Rename a file where it is (2026-11-28): its page, and any link to it, stay the same; its new path. */
 export async function renameWorkspaceFile(id: string, path: string, name: string): Promise<{ path: string }> {
   return authedPut(`${workspaceUrl(id)}/files/${workspacePath(path)}`, { name }, "PATCH");
