@@ -13,6 +13,7 @@ import {
   deleteWorkspaceFile,
   deleteWorkspaceFolder,
   renameWorkspaceFile,
+  moveWorkspaceItem,
   renameWorkspaceFolder,
   fetchWorkspace,
   fetchWorkspaces,
@@ -110,6 +111,14 @@ export async function addFolder(id: string, path: string): Promise<void> {
 export async function removeFolder(id: string, path: string): Promise<void> {
   await deleteWorkspaceFolder(id, path);
   await loadTree(id);
+}
+
+/** Move a file or a folder into a folder (`""` its top) of this workspace or another; where it
+ * is now. Both workspaces' trees are read again. */
+export async function moveItem(id: string, path: string, toWorkspace: string, toFolder: string): Promise<{ workspace_id: string; path: string }> {
+  const moved = await moveWorkspaceItem(id, path, toWorkspace, toFolder);
+  await Promise.all(id === toWorkspace ? [loadTree(id)] : [loadTree(id), loadTree(toWorkspace)]);
+  return moved;
 }
 
 /** Rename a file where it is; its new path. */

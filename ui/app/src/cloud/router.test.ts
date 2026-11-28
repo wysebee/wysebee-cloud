@@ -54,6 +54,20 @@ describe("dispatch", () => {
     expect((await call("GET", "/api/v1/workspacesx")).status).toBe(501);
   });
 
+  it("passes menu orders straight through to Wysebee Cloud", async () => {
+    const seen: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init: RequestInit) => {
+        seen.push(`${init.method ?? "GET"} ${url} ${init.body ?? ""}`.trim());
+        return new Response(JSON.stringify({ ok: true }), { status: 200 });
+      }),
+    );
+    expect(await call("GET", "/api/v1/menu-orders/workspaces")).toEqual({ status: 200, body: { ok: true } });
+    expect(await call("PUT", "/api/v1/menu-orders/workspaces", '{"scope":"","keys":["w1"]}')).toEqual({ status: 200, body: { ok: true } });
+    expect(seen).toEqual(["GET /api/v1/menu-orders/workspaces", 'PUT /api/v1/menu-orders/workspaces {"scope":"","keys":["w1"]}']);
+  });
+
   it("refuses a body that is not JSON, and what the web cannot do", async () => {
     expect(await call("PUT", "/agent/agents/a1", "{nope")).toEqual({
       status: 422,

@@ -156,6 +156,20 @@ class SkillRequest(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class MenuOrder(Base):
+    """The order a person dragged a menu's items into (apps/cloud/menu_orders.py, migration
+    0087): one row per menu (``workspaces``; ``tasks`` and ``agents`` later) and scope — the
+    list the items are in — its items' keys in order. Items not in it follow, by name."""
+
+    __tablename__ = "menu_orders"
+
+    user_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    menu: Mapped[str] = mapped_column(String(40), primary_key=True)
+    scope: Mapped[str] = mapped_column(String(500), primary_key=True)
+    keys: Mapped[list[str]] = mapped_column(JSONB, server_default=text("'[]'::jsonb"))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class UserWorkspace(Base):
     """One of a person's workspaces (apps/cloud/workspaces.py): a folder of documentation files
     in the workspace store (``user-workspaces`` in production), ``<user id>/<workspace id>/``

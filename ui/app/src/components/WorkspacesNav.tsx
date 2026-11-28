@@ -11,6 +11,7 @@ import {
   isHtmlPage,
   loadWorkspaces,
   loadTree,
+  moveItem,
   pagePath,
   reasonOf,
   removeFile,
@@ -24,6 +25,8 @@ import {
   type TreeNode,
 } from "../workspaces";
 import { dialogs } from "./common/confirm";
+import { useMenuDrag, type DropWhere } from "./common/menuDrag";
+import { ordered, placed, saveMenuOrder, useMenuOrders } from "../menuOrders";
 
 // The Agents menu's look (AgentsNav.tsx): the rail's own purple, white on it.
 const row = "flex w-full min-w-0 items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-white/85 hover:bg-white/10";
@@ -33,6 +36,35 @@ const hoverBtn =
 const nameInput =
   "min-w-0 flex-1 rounded border border-white/30 bg-white/15 px-1.5 py-0.5 text-sm text-white outline-none placeholder:text-white/55 focus:ring-2 focus:ring-white/40";
 const menuItem = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-sm text-stone-700 hover:bg-stone-100 dark:text-stone-200 dark:hover:bg-stone-700";
+
+// The menu its order is kept as (apps/cloud/menu_orders.py): scope "" the workspaces' ids;
+// "<workspace id>" its top's items by name, "<workspace id>/<folder>" a folder's.
+const MENU = "workspaces";
+
+/** A row dragged, or dropped on: a workspace, or a folder or a file in one. */
+type Item = { kind: "workspace"; id: string } | { kind: "folder" | "file"; workspace: string; path: string };
+
+const parentOf = (path: string) => path.slice(0, Math.max(0, path.lastIndexOf("/")));
+const nameOf = (path: string) => path.slice(path.lastIndexOf("/") + 1);
+const scopeOf = (workspace: string, folder: string) => (folder ? `${workspace}/${folder}` : workspace);
+/** `path` is `folder` or inside it. */
+const within = (path: string, folder: string) => `${path}/`.startsWith(`${folder}/`);
+
+/**
+ * Where a row may be dropped on another (2026-11-28, the person's call): a workspace before or
+ * after another; a folder or a file into a workspace (its top) or into a folder, in any of the
+ * person's workspaces; and before or after one of its own kind — folders stay before files —
+ * which moves it there first when it was elsewhere. Never onto itself or into what it holds,
+ * nor into where it already is.
+ */
+function accepts(drag: Item, target: Item): DropWhere[] {
+  if (drag.kind === "workspace") return target.kind === "workspace" ? ["before", "after"] : [];
+  if (target.kind === "workspace") return drag.workspace === target.id && !parentOf(drag.path) ? [] : ["into"];
+  if (drag.workspace === target.workspace && within(target.path, drag.path)) return [];
+  const where: DropWhere[] = drag.kind === target.kind ? ["before", "after"] : [];
+  if (target.kind === "folder" && !(drag.workspace === target.workspace && parentOf(drag.path) === target.path)) where.push("into");
+  return where;
+}
 
 /** What is being added inside a folder, named in the menu. */
 interface AddingIn {
@@ -49,6 +81,10 @@ interface AddingIn {
  * and a file opens in the page's editor. On hover, a folder's + adds a page or a folder
  * inside it (named in the menu, 2026-11-14) — a document (markdown) or a page (`.html`, 2026-11-27), and its trash deletes it and all it holds. A
  * workspace's pencil, on hover, renames it in place (2026-11-16): its files stay where they are.
+ * Every row can be dragged (2026-11-28): workspaces into an order, a folder's items into an
+ * order (folders before files), and a file or a folder into another folder or workspace — its
+ * pages and their links going with it. The order is kept per person (`menuOrders.ts`), and the
+ * dragging is the menus' shared `useMenuDrag` (common/menuDrag.ts), for Tasks and Agents later.
  */
 export function WorkspacesNav({
   selectedWorkspace,
@@ -299,6 +335,63 @@ export function WorkspacesNav({
     }
   };
 
+  // --- dragging (2026-11-28) -------------------------------------------------------------
+  const orders = useMenuOrders(MENU);
+  const workspaces = ordered(items ?? [], (w) => w.id, orders[""]);
+  /** A folder's items (`""` the top) in the order kept for them: folders first, then files. */
+  const inOrder = (workspace: string, folder: string, nodes: TreeNode[]) => {
+    const keys = orders[scopeOf(workspace, folder)];
+    const byName = (n: TreeNode) => n.name;
+    return [...ordered(nodes.filter((n) => n.kind === "folder"), byName, keys), ...ordered(nodes.filter((n) => n.kind === "file"), byName, keys)];
+  };
+  /** The names a folder's items are shown in now. */
+  const shownNames = (workspace: string, folder: string) => {
+    let nodes = buildTree(trees[workspace]);
+    const parts = folder ? folder.split("/") : [];
+    parts.forEach((_, i) => (nodes = nodes.find((n) => n.path === parts.slice(0, i + 1).join("/"))!.children));
+    return inOrder(workspace, folder, nodes).map((n) => n.name);
+  };
+
+  // Moved: what was open in it stays open where it went, as does the folder it went into; what
+  // was shown in it is shown there.
+  const moveTo = async (drag: Extract<Item, { path: string }>, workspace: string, folder: string) => {
+    const moved = await moveItem(drag.workspace, drag.path, workspace, folder);
+    const follow = (p: string) => moved.path + p.slice(drag.path.length);
+    setOpen((prev) => {
+      const next = new Set<string>();
+      for (const k of prev) {
+        const p = k.slice(drag.workspace.length + 1);
+        next.add(k.startsWith(`${drag.workspace}/`) && within(p, drag.path) ? `${moved.workspace_id}/${follow(p)}` : k);
+      }
+      return next.add(workspace).add(scopeOf(workspace, folder));
+    });
+    if (selectedWorkspace === drag.workspace && selectedFile && within(selectedFile, drag.path)) onSelect(moved.workspace_id, follow(selectedFile));
+    else if (selectedWorkspace === drag.workspace && !selectedFile && selectedFolder && within(selectedFolder, drag.path))
+      onSelect(moved.workspace_id, undefined, follow(selectedFolder));
+  };
+
+  const drop = async (drag: Item, target: Item, where: DropWhere) => {
+    try {
+      if (drag.kind === "workspace") {
+        const id = (target as Extract<Item, { kind: "workspace" }>).id;
+        await saveMenuOrder(MENU, "", placed(workspaces.map((w) => w.id), drag.id, id, where as "before" | "after"));
+      } else if (target.kind === "workspace") {
+        await moveTo(drag, target.id, "");
+      } else if (where === "into") {
+        await moveTo(drag, target.workspace, target.path);
+      } else {
+        // Beside another: moved into its folder first when it was elsewhere, then put in place.
+        const folder = parentOf(target.path);
+        const names = shownNames(target.workspace, folder);
+        if (drag.workspace !== target.workspace || parentOf(drag.path) !== folder) await moveTo(drag, target.workspace, folder);
+        await saveMenuOrder(MENU, scopeOf(target.workspace, folder), placed(names, nameOf(drag.path), nameOf(target.path), where));
+      }
+    } catch (e) {
+      toast.error(reasonOf(e));
+    }
+  };
+  const drag = useMenuDrag<Item, Item>({ accepts, onDrop: (d, t, w) => void drop(d, t, w) });
+
   const renderNodes = (workspace: string, nodes: TreeNode[], depth: number) =>
     nodes.map((node) => {
       const key = `${workspace}/${node.path}`;
@@ -344,7 +437,12 @@ export function WorkspacesNav({
             </li>
           );
         return (
-          <li key={key} className="group/file relative">
+          <li
+            key={key}
+            className={cn("group/file relative rounded-md", drag.markOf(key))}
+            {...drag.source(key, { kind: "file", workspace, path: node.path })}
+            {...drag.target(key, { kind: "file", workspace, path: node.path })}
+          >
             <button
               type="button"
               className={cn(row, "pr-8", active && activeRow)}
@@ -388,7 +486,11 @@ export function WorkspacesNav({
           {/* The hover group is the folder's own row, not its <li>: what it holds is inside the
               <li>, and hovering that must not show this folder's buttons (nor a folder's
               inside it). */}
-          <div className="group/folder relative">
+          <div
+            className={cn("group/folder relative rounded-md", drag.markOf(key))}
+            {...(renamingThis ? {} : drag.source(key, { kind: "folder", workspace, path: node.path }))}
+            {...drag.target(key, { kind: "folder", workspace, path: node.path })}
+          >
             {renamingThis ? (
               <form
                 className="flex items-center gap-1.5 py-0.5 pr-2"
@@ -518,7 +620,7 @@ export function WorkspacesNav({
                   </form>
                 </li>
               )}
-              {renderNodes(workspace, node.children, depth + 1)}
+              {renderNodes(workspace, inOrder(workspace, node.path, node.children), depth + 1)}
             </ul>
           )}
         </li>
@@ -557,7 +659,7 @@ export function WorkspacesNav({
         {error && <li className="px-2 text-xs text-red-100">{error}</li>}
         {items === null && !error && <li className="px-2 text-xs text-white/70">{t("workspaces.nav.loading")}</li>}
         {items?.length === 0 && !adding && <li className="px-2 text-xs text-white/70">{t("workspaces.nav.none")}</li>}
-        {(items ?? []).map((workspace) => {
+        {workspaces.map((workspace) => {
           const expanded = open.has(workspace.id);
           const tree = trees[workspace.id];
           return (
@@ -588,7 +690,11 @@ export function WorkspacesNav({
                   />
                 </form>
               ) : (
-                <div className="group/workspace relative">
+                <div
+                  className={cn("group/workspace relative rounded-md", drag.markOf(`ws:${workspace.id}`))}
+                  {...drag.source(`ws:${workspace.id}`, { kind: "workspace", id: workspace.id })}
+                  {...drag.target(`ws:${workspace.id}`, { kind: "workspace", id: workspace.id })}
+                >
                   <button
                     type="button"
                     className={cn(row, "pr-8", selectedWorkspace === workspace.id && !selectedFile && !selectedFolder && activeRow)}
@@ -627,7 +733,7 @@ export function WorkspacesNav({
               {expanded && (
                 <ul className="flex flex-col gap-0.5">
                   {tree ? (
-                    renderNodes(workspace.id, buildTree(tree), 1)
+                    renderNodes(workspace.id, inOrder(workspace.id, "", buildTree(tree)), 1)
                   ) : (
                     <li className="px-6 text-xs text-white/70">{t("workspaces.nav.loading")}</li>
                   )}
