@@ -792,6 +792,38 @@ def test_pages_follow_their_documents_when_their_folder_is_renamed(client, users
 
 
 @needs_db
+def test_a_renamed_file_keeps_its_page_and_its_shared_link(client, users):
+    me, _ = users
+    pid = workspace(client, me)
+    files = f"/api/v1/workspaces/{pid}/files"
+    # A page made directly, with no <title>: its file name is its title.
+    assert client.put(f"{files}/reports/sales.html", json={"content": "<p>s</p>"}, headers=h(me)).status_code == 200
+    direct = client.get(f"/api/v1/workspaces/{pid}/page?path=reports/sales.html", headers=h(me)).json()["page"]["id"]
+    # A document with the page the AI app made of it.
+    assert client.put(f"{files}/notes.md", json={"content": "n"}, headers=h(me)).status_code == 200
+    turn_on(client, me, pid, path="notes.md", content="n")
+    made = call(client, me, "write_page", {"html": "<title>Notes</title><p>n</p>"})[0].rsplit("/", 1)[-1]
+    before = {}
+    for page_id in (direct, made):
+        share = client.put(f"/api/v1/pages/{page_id}/share", json={"audience": "public"}, headers=h(me)).json()
+        before[page_id] = (client.get(f"/api/v1/pages/{page_id}", headers=h(me)).json(), share["url"].removeprefix("https://app.wysebee.com"))
+
+    assert client.patch(f"{files}/reports/sales.html", json={"name": "q4.html"}, headers=h(me)).json() == {"path": "reports/q4.html"}
+    assert client.patch(f"{files}/notes.md", json={"name": "Notes.md"}, headers=h(me)).json() == {"path": "Notes.md"}
+    # A page made directly with no <title> takes its new file name; the AI app's keeps the title it gave.
+    for page_id, path, text, title in ((direct, "reports/q4.html", "<p>s</p>", "q4"), (made, "Notes.md", "<title>Notes</title><p>n</p>", "notes.md")):
+        page = client.get(f"/api/v1/pages/{page_id}", headers=h(me)).json()
+        old, shared = before[page_id]
+        # The same page at the same addresses: its view, and the link given out.
+        assert (page["source_path"], page["title"]) == (path, title)
+        assert page["view_url"] == old["view_url"] and page["share"] == old["share"]
+        assert client.get(f"/api/v1/workspaces/{pid}/page?path={path}", headers=h(me)).json()["page"]["id"] == page_id
+        assert bare(client.get(page["view_url"]).text) == text
+        assert bare(client.get(shared).text) == text
+    assert client.get(f"/api/v1/workspaces/{pid}/page?path=reports/sales.html", headers=h(me)).json() == {"page": None}
+
+
+@needs_db
 def test_a_page_made_directly_is_shared_as_its_file_is_now(client, users):
     me = users[0]
     pid = workspace(client, me)

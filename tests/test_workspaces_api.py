@@ -208,3 +208,32 @@ def test_a_folder_is_renamed_where_it_is_with_all_it_holds(client, users, worksp
     assert rename("README.md", "x").status_code == 404
     assert rename("Other", "x", who=b).status_code == 404
 
+
+@needs_db
+def test_a_file_is_renamed_where_it_is(client, users):
+    a, b = users
+    base = f"/api/v1/workspaces/{create(client, a).json()['id']}"
+    for path in ("guide/setup.md", "guide/page.html", "other.md"):
+        assert client.put(f"{base}/files/{path}", json={"content": path}, headers=h(a)).status_code == 200
+    rename = lambda path, name, who=a: client.patch(f"{base}/files/{path}", json={"name": name}, headers=h(who))  # noqa: E731
+
+    assert rename("guide/setup.md", " Install.md ").json() == {"path": "guide/Install.md"}
+    assert client.get(f"{base}/files/guide/Install.md", headers=h(a)).json()["content"] == "guide/setup.md"
+    assert client.get(f"{base}/files/guide/setup.md", headers=h(a)).status_code == 404
+    # Its case alone; its own name.
+    assert rename("other.md", "Other.md").json() == {"path": "Other.md"}
+    assert [f["path"] for f in client.get(base, headers=h(a)).json()["files"]] == ["Other.md", "README.md", "guide/Install.md", "guide/page.html"]
+    assert rename("Other.md", "Other.md").json() == {"path": "Other.md"}
+    # Taken there, by a file (whatever its case) or a folder: refused.
+    assert rename("Other.md", "readme.md").status_code == 409
+    assert rename("Other.md", "guide").status_code == 409
+    # A page stays a page, a document a document.
+    assert rename("guide/page.html", "page.md").status_code == 422
+    assert rename("Other.md", "other.html").status_code == 422
+    # Not a name; not there; a folder; another person's.
+    assert rename("Other.md", "a/b.md").status_code == 422
+    assert rename("Other.md", ".hidden").status_code == 422
+    assert rename("nope.md", "x.md").status_code == 404
+    assert rename("guide", "x").status_code == 404
+    assert rename("Other.md", "x.md", who=b).status_code == 404
+

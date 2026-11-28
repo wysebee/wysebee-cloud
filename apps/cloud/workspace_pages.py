@@ -242,6 +242,17 @@ async def forget_under(session: AsyncSession, store: WorkspaceStore, sub: str, w
         await session.delete(page)
 
 
+async def move(session: AsyncSession, workspace_id: str, source_path: str, to: str, data: bytes) -> None:
+    """A document renamed: its page follows it — the same page, id, view address and public
+    address (``share_key``), so a link already given out keeps working (the caller commits). A
+    page made directly that has no ``<title>`` takes its new file name as its title."""
+    page = await session.scalar(select(WorkspacePage).where(WorkspacePage.workspace_id == workspace_id, WorkspacePage.source_path == source_path))
+    if page is not None:
+        page.source_path = to
+        if page.kind == "file":
+            page.title = title_of(data, to)
+
+
 async def move_under(session: AsyncSession, workspace_id: str, folder: str, to: str) -> None:
     """A folder renamed: the pages of its documents follow them, keeping their ids and
     addresses (the caller commits). A page made directly moved with its file; one in ``.pages``
