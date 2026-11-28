@@ -9,6 +9,8 @@ import { resetWorkspaces } from "../workspaces";
 import { WorkspacesNav } from "./WorkspacesNav";
 import { useFetchTransport } from "../../../test/transport";
 import { dialogs } from "./common/confirm";
+import { resetMenuOrders } from "../menuOrders";
+import { dragOnto, useDragEvents } from "../../../test/drag";
 
 
 const workspace = (id: string, name: string) => ({ id, name, resource_url: `https://acct/user-workspaces/me/${name}/` });
@@ -18,8 +20,11 @@ const tree = {
   folders: ["guide"],
 };
 
+useDragEvents();
+
 beforeEach(() => {
   resetWorkspaces();
+  resetMenuOrders();
   vi.restoreAllMocks();
 });
 
@@ -479,5 +484,116 @@ describe("WorkspacesNav", () => {
     await userEvent.type(screen.getByRole("textbox", { name: "Folder name" }), "kept");
     fireEvent.blur(screen.getByRole("textbox", { name: "Folder name" }));
     expect(screen.getByRole("textbox", { name: "Folder name" })).toBeTruthy();
+  });
+
+  describe("dragging (2026-11-28)", () => {
+    /** A row's draggable part: a workspace's or a folder's row, a file's item. */
+    const rowOf = (name: string) => screen.getByRole("button", { name }).parentElement!;
+    const names = () => screen.getAllByRole("button").map((b) => b.textContent).filter((n) => n && !/^(All workspaces)$/.test(n));
+    const other = { ...workspace("p2", "Other"), files: [{ path: "README.md", size: 1 }], folders: ["inbox"] };
+    const both = (routes: Record<string, unknown> = {}) => ({ "GET /api/v1/workspaces/p2": other, ...routes });
+
+    it("shows the workspaces and each folder in the order they were dragged into, folders before files", async () => {
+      setup("p1", null, {
+        "GET /api/v1/menu-orders/workspaces": { orders: { "": ["p2", "p1"], p1: ["sales.html", "README.md", "guide"] } },
+      });
+      await screen.findByRole("button", { name: "guide" });
+      await waitFor(() => expect(names().slice(0, 2)).toEqual(["Other", "Docs"]));
+      expect(names().filter((n) => ["guide", "sales", "README.md"].includes(n!))).toEqual(["guide", "sales", "README.md"]);
+    });
+
+    it("reorders the workspaces, and a folder's files, by dropping one before or after another", async () => {
+      const { f } = setup("p1", null, { "PUT /api/v1/menu-orders/workspaces": (r: FakeRequest) => r.body });
+      await screen.findByRole("button", { name: "sales" });
+      dragOnto(rowOf("Docs"), rowOf("Other"), "after");
+      await waitFor(() => expect(f.to("PUT /api/v1/menu-orders/workspaces")[0]?.body).toEqual({ scope: "", keys: ["p2", "p1"] }));
+      expect(names().slice(0, 2)).toEqual(["Other", "Docs"]);
+      dragOnto(rowOf("sales"), rowOf("README.md"), "before");
+      await waitFor(() => expect(f.to("PUT /api/v1/menu-orders/workspaces")[1]?.body).toEqual({ scope: "p1", keys: ["guide", "sales.html", "README.md"] }));
+      expect(f.to("POST /api/v1/workspaces/p1/move")).toHaveLength(0);
+    });
+
+    it("moves a file into a folder, and the file open goes with it", async () => {
+      const { f, onSelect } = setup("p1", "sales.html", {
+        "POST /api/v1/workspaces/p1/move": { workspace_id: "p1", path: "guide/sales.html" },
+      });
+      await screen.findByRole("button", { name: "sales" });
+      dragOnto(rowOf("sales"), rowOf("guide"), "into");
+      await waitFor(() => expect(onSelect).toHaveBeenLastCalledWith("p1", "guide/sales.html"));
+      expect(f.to("POST /api/v1/workspaces/p1/move")[0].body).toEqual({ path: "sales.html", to_workspace: "p1", to_folder: "guide" });
+      expect(f.to("GET /api/v1/workspaces/p1").length).toBeGreaterThan(1);
+      // The folder it went into is unfolded.
+      expect(screen.getByRole("button", { name: "setup.md" })).toBeTruthy();
+    });
+
+    it("moves a folder to another workspace, and the folder shown goes with it", async () => {
+      const { f, onSelect } = setup("p1", null, both({ "POST /api/v1/workspaces/p1/move": { workspace_id: "p2", path: "guide" } }));
+      await userEvent.click(await screen.findByRole("button", { name: "guide" }));
+      expect(onSelect).toHaveBeenLastCalledWith("p1", undefined, "guide");
+      dragOnto(rowOf("guide"), rowOf("Other"), "into");
+      await waitFor(() => expect(onSelect).toHaveBeenLastCalledWith("p2", undefined, "guide"));
+      expect(f.to("POST /api/v1/workspaces/p1/move")[0].body).toEqual({ path: "guide", to_workspace: "p2", to_folder: "" });
+      await waitFor(() => expect(f.to("GET /api/v1/workspaces/p2").length).toBeGreaterThan(0));
+    });
+
+    it("moves an item beside one in another folder there, then puts it in its place", async () => {
+      const { f, onSelect } = setup("p1", "README.md", {
+        "POST /api/v1/workspaces/p1/move": { workspace_id: "p1", path: "setup.md" },
+        "PUT /api/v1/menu-orders/workspaces": (r: FakeRequest) => r.body,
+      });
+      await userEvent.click(await screen.findByRole("button", { name: "guide" }));
+      await userEvent.click(screen.getByRole("button", { name: "README.md" }));
+      dragOnto(rowOf("setup.md"), rowOf("README.md"), "before");
+      await waitFor(() => expect(f.to("PUT /api/v1/menu-orders/workspaces")).toHaveLength(1));
+      expect(f.to("POST /api/v1/workspaces/p1/move")[0].body).toEqual({ path: "guide/setup.md", to_workspace: "p1", to_folder: "" });
+      expect(f.to("PUT /api/v1/menu-orders/workspaces")[0].body).toEqual({ scope: "p1", keys: ["guide", "setup.md", "README.md", "sales.html"] });
+      // The file open was elsewhere: it stays open.
+      expect(onSelect).toHaveBeenLastCalledWith("p1", "README.md");
+    });
+
+    it("moves a file to the top of its workspace, a folder before another, and says why a move is refused", async () => {
+      const toastError = vi.spyOn(toast, "error");
+      let moves = 0;
+      const { f } = setup("p1", null, both({
+        "GET /api/v1/workspaces/p1": { ...tree, folders: ["guide", "notes"] },
+        "POST /api/v1/workspaces/p1/move": () => (++moves === 1 ? { workspace_id: "p1", path: "setup.md" } : reply(409, { detail: "'README.md' is already there." })),
+        "PUT /api/v1/menu-orders/workspaces": (r: FakeRequest) => r.body,
+      }));
+      await userEvent.click(await screen.findByRole("button", { name: "guide" }));
+      dragOnto(rowOf("setup.md"), rowOf("Docs"), "into");
+      await waitFor(() => expect(f.to("POST /api/v1/workspaces/p1/move")[0]?.body).toEqual({ path: "guide/setup.md", to_workspace: "p1", to_folder: "" }));
+      dragOnto(rowOf("notes"), rowOf("guide"), "before");
+      await waitFor(() => expect(f.to("PUT /api/v1/menu-orders/workspaces")[0]?.body).toEqual({ scope: "p1", keys: ["notes", "guide", "README.md", "sales.html"] }));
+      dragOnto(rowOf("README.md"), rowOf("Other"), "into");
+      await waitFor(() => expect(toastError).toHaveBeenCalledWith("'README.md' is already there."));
+    });
+
+    it("reorders the files of a folder inside a folder", async () => {
+      const { f } = setup("p1", null, {
+        "GET /api/v1/workspaces/p1": { ...tree, files: [{ path: "guide/deep/a.md", size: 1 }, { path: "guide/deep/b.md", size: 1 }], folders: ["guide", "guide/deep"] },
+        "PUT /api/v1/menu-orders/workspaces": (r: FakeRequest) => r.body,
+      });
+      await userEvent.click(await screen.findByRole("button", { name: "guide" }));
+      await userEvent.click(await screen.findByRole("button", { name: "deep" }));
+      dragOnto(rowOf("b.md"), rowOf("a.md"), "before");
+      await waitFor(() => expect(f.to("PUT /api/v1/menu-orders/workspaces")[0]?.body).toEqual({ scope: "p1/guide/deep", keys: ["b.md", "a.md"] }));
+      await waitFor(() => expect(names().filter((n) => n!.endsWith(".md"))).toEqual(["b.md", "a.md"]));
+    });
+
+    it("drops nothing where it cannot go", async () => {
+      const { f } = setup("p1", null, { "GET /api/v1/workspaces/p1": { ...tree, folders: ["guide", "guide/deep"] } });
+      await userEvent.click(await screen.findByRole("button", { name: "guide" }));
+      // At its workspace's top already; into the folder it is in; a folder into what it holds;
+      // a folder beside a file; a workspace onto a folder. (A file on a folder's row goes into it.)
+      dragOnto(rowOf("README.md"), rowOf("Docs"), "into");
+      dragOnto(rowOf("setup.md"), rowOf("guide"), "into");
+      dragOnto(rowOf("guide"), rowOf("deep"), "into");
+      dragOnto(rowOf("guide"), rowOf("README.md"), "before");
+      dragOnto(rowOf("sales"), rowOf("guide"), "before");
+      dragOnto(rowOf("Docs"), rowOf("guide"), "into");
+      expect(f.to("POST /api/v1/workspaces/p1/move")).toHaveLength(1);
+      expect(f.to("POST /api/v1/workspaces/p1/move")[0].body).toEqual({ path: "sales.html", to_workspace: "p1", to_folder: "guide" });
+      expect(f.to("PUT /api/v1/menu-orders/workspaces")).toHaveLength(0);
+    });
   });
 });

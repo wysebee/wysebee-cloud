@@ -123,8 +123,13 @@ def test_another_persons_or_no_agent_is_not_there(client: TestClient, me: dict[s
 
 def test_deleting_an_agent_frees_its_name(client: TestClient, me: dict[str, str]) -> None:
     a = make(client, me, "alpha")
+    wysebee = client.get(BASE, headers=me).json()["agents"][0]["id"]
+    order = {"scope": "", "keys": [a["id"], wysebee]}
+    assert client.put("/api/v1/menu-orders/agents", json=order, headers=me).status_code == 200
     assert client.delete(f"{BASE}/{a['id']}", headers=me).status_code == 204
     assert listed(client, me) == ["wysebee"]
+    # Its place in the Agents menu's order goes with it.
+    assert client.get("/api/v1/menu-orders/agents", headers=me).json()["orders"] == {"": [wysebee]}
     assert make(client, me, "alpha")["id"] != a["id"]
 
 

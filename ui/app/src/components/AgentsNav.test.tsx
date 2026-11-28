@@ -5,12 +5,16 @@ import "../i18n";
 import { mockFetch, reply, type FakeRequest } from "../../../test/fetch";
 import { resetAgents } from "../agents";
 import { resetPresence } from "../presence";
+import { resetMenuOrders } from "../menuOrders";
+import { dragOnto, useDragEvents } from "../../../test/drag";
 import { AgentsNav } from "./AgentsNav";
 import { useFetchTransport } from "../../../test/transport";
 
 useFetchTransport();
+useDragEvents();
 
 beforeEach(() => {
+  resetMenuOrders();
   resetAgents();
   resetPresence();
 });
@@ -104,5 +108,26 @@ describe("AgentsNav", () => {
     expect(screen.getByRole("dialog")).toBeTruthy();
     await userEvent.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  describe("dragging (2026-11-28)", () => {
+    const three = { rows: [{ id: "w", agent_name: "wysebee", label: "Wysebee", updated_at: null }, { id: "a1", agent_name: "aide", label: "Aide", updated_at: null }, { id: "a2", agent_name: "bee", label: "Bee", updated_at: null }] };
+    const names = () => screen.getAllByRole("listitem").map((li) => li.textContent).filter((n) => ["Wysebee", "Aide", "Bee"].includes(n!));
+    const rowOf = (name: RegExp) => screen.getByRole("button", { name }).parentElement!;
+
+    it("shows the agents in the order they were dragged into, any others after as listed", async () => {
+      setup(null, { "GET /agent/agents": three, "GET /api/v1/menu-orders/agents": { orders: { "": ["a2", "w"] } } });
+      await screen.findByRole("button", { name: /Aide$/ });
+      await waitFor(() => expect(names()).toEqual(["Bee", "Wysebee", "Aide"]));
+    });
+
+    it("reorders the agents by dropping one before or after another, and keeps the order", async () => {
+      const { f } = setup(null, { "GET /agent/agents": three, "GET /api/v1/menu-orders/agents": { orders: {} }, "PUT /api/v1/menu-orders/agents": (r: FakeRequest) => r.body });
+      await screen.findByRole("button", { name: /Bee$/ });
+      await waitFor(() => expect(f.to("GET /api/v1/menu-orders/agents")).toHaveLength(1));
+      dragOnto(rowOf(/Bee$/), rowOf(/Wysebee$/), "before");
+      await waitFor(() => expect(f.to("PUT /api/v1/menu-orders/agents")[0]?.body).toEqual({ scope: "", keys: ["a2", "w", "a1"] }));
+      expect(names()).toEqual(["Bee", "Wysebee", "Aide"]);
+    });
   });
 });

@@ -824,6 +824,40 @@ def test_a_renamed_file_keeps_its_page_and_its_shared_link(client, users):
 
 
 @needs_db
+def test_pages_and_their_shared_links_follow_a_move_to_another_workspace(client, users):
+    me, _ = users
+    one, two = workspace(client, me, "One"), workspace(client, me, "Two")
+    files = f"/api/v1/workspaces/{one}/files"
+    assert client.put(f"{files}/reports/sales.html", json={"content": "<p>s</p>"}, headers=h(me)).status_code == 200
+    direct = client.get(f"/api/v1/workspaces/{one}/page?path=reports/sales.html", headers=h(me)).json()["page"]["id"]
+    assert client.put(f"{files}/reports/notes.md", json={"content": "n"}, headers=h(me)).status_code == 200
+    turn_on(client, me, one, path="reports/notes.md", content="n")
+    made = call(client, me, "write_page", {"html": "<p>n</p>"})[0].rsplit("/", 1)[-1]
+    before = {}
+    for page_id in (direct, made):
+        share = client.put(f"/api/v1/pages/{page_id}/share", json={"audience": "public"}, headers=h(me)).json()
+        before[page_id] = (client.get(f"/api/v1/pages/{page_id}", headers=h(me)).json(), share["url"].removeprefix("https://app.wysebee.com"))
+
+    r = client.post(f"/api/v1/workspaces/{one}/move", json={"path": "reports", "to_workspace": two}, headers=h(me))
+    assert r.json() == {"workspace_id": two, "path": "reports"}
+    for page_id, path, text in ((direct, "reports/sales.html", "<p>s</p>"), (made, "reports/notes.md", "<p>n</p>")):
+        page = client.get(f"/api/v1/pages/{page_id}", headers=h(me)).json()
+        old, shared = before[page_id]
+        assert (page["workspace_id"], page["workspace_name"], page["source_path"]) == (two, "Two", path)
+        assert page["view_url"] == old["view_url"] and page["share"] == old["share"]
+        assert client.get(f"/api/v1/workspaces/{two}/page?path={path}", headers=h(me)).json()["page"]["id"] == page_id
+        assert bare(client.get(page["view_url"]).text) == text
+        assert bare(client.get(shared).text) == text
+    # Not left behind in the workspace it left, nor among the files of the one it went to.
+    assert client.get(f"/api/v1/workspaces/{one}/page?path=reports/notes.md", headers=h(me)).json() == {"page": None}
+    assert [f["path"] for f in client.get(f"/api/v1/workspaces/{two}", headers=h(me)).json()["files"]] == ["README.md", "reports/notes.md", "reports/sales.html"]
+    # Moved alone, within its workspace: its page follows too.
+    assert client.post(f"/api/v1/workspaces/{two}/move", json={"path": "reports/notes.md"}, headers=h(me)).json() == {"workspace_id": two, "path": "notes.md"}
+    assert client.get(f"/api/v1/pages/{made}", headers=h(me)).json()["source_path"] == "notes.md"
+    assert bare(client.get(before[made][1]).text) == "<p>n</p>"
+
+
+@needs_db
 def test_a_page_made_directly_is_shared_as_its_file_is_now(client, users):
     me = users[0]
     pid = workspace(client, me)

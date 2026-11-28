@@ -29,6 +29,11 @@ file, ``README.md``, so the folder exists from the start; an empty folder holds 
   ``{path}`` the new one. Its page goes with it, the same page at the same addresses, its
   public link too. A name taken there (a file or a folder, whatever its case) is a 409; a
   page (``.html``) stays a page and a document stays a document (422).
+- ``POST /workspaces/{id}/move`` ``{path, to_workspace?, to_folder}`` — moves a file or a
+  folder, with all it holds, into a folder (``""`` its top) of this workspace or another of the
+  person's (2026-11-28); ``{workspace_id, path}`` where it is now. Its pages go with it, the same
+  pages at the same addresses, public links too. A name taken there (whatever its case) or one
+  past the workspace's file limit is a 409; a folder into itself a 422.
 - ``POST /workspaces/{id}/folders/{path}`` — 201 ``{path}``; ``DELETE`` — 204, with all it holds.
 - ``PATCH /workspaces/{id}/folders/{path}`` ``{name}`` — renames it where it is (2026-11-28):
   everything in it moves to ``{path}`` with the new last segment, its pages with their
@@ -60,7 +65,7 @@ from apps.cloud.config import Settings
 from apps.cloud.deps import get_session
 from apps.cloud.models import UserWorkspace
 from apps.cloud.people import Person, named, of_rows, stamp
-from apps.cloud import workspace_pages
+from apps.cloud import menu_orders, workspace_pages
 from apps.cloud.workspace_storage import FOLDER_MARKER, AzureBlobWorkspaceStore, FileWorkspaceStore, WorkspaceStore
 
 logger = logging.getLogger("wysebee.cloud.workspaces")
@@ -74,6 +79,8 @@ SEGMENT_MAX = 100
 PATH_MAX = 400
 PATH_DEPTH = 10
 README = "README.md"
+# The menu its workspaces, folders and files are ordered in (apps/cloud/menu_orders.py).
+MENU = "workspaces"
 # The per-person advisory lock a create takes (skill files use 7_274_101).
 _LOCK_CLASS = 7_274_102
 
@@ -86,6 +93,13 @@ class NewWorkspace(BaseModel):
 
 class NewName(BaseModel):
     name: str
+
+
+class MoveBody(BaseModel):
+    path: str
+    # The workspace it goes to (this one if absent) and the folder there ("" for its top).
+    to_workspace: str | None = None
+    to_folder: str = ""
 
 
 class FileBody(BaseModel):
@@ -274,6 +288,9 @@ async def delete_workspace(
     workspace = await _workspace(session, user, workspace_id)
     folder = workspace.workspace_id
     await session.delete(workspace)
+    # Its place in the menu, and the order kept for each of its folders.
+    await menu_orders.forget(session, user.sub, MENU, folder)
+    await menu_orders.drop_key(session, user.sub, MENU, "", folder)
     await session.commit()
     try:
         await store.delete_prefix(_sub(user), folder)
@@ -355,6 +372,7 @@ async def delete_file(
     await store.delete(sub, f"{folder}/{path}")
     # Its page (if the AI app made one) goes with it.
     await workspace_pages.forget(session, store, sub, folder, path)
+    await menu_orders.drop_key(session, user.sub, MENU, menu_orders.parent_scope(folder, path), menu_orders.name_of(path))
     if parent and not await store.list(sub, f"{folder}/{parent}"):
         await store.write(sub, f"{folder}/{parent}/{FOLDER_MARKER}", b"", "text/plain")
     await _touch(session, workspace, user)
@@ -401,6 +419,7 @@ async def rename_file(
         await store.write(sub, f"{folder}/{new}", data, content_type(new))
         await store.delete(sub, f"{folder}/{path}")
     await workspace_pages.move(session, folder, path, new, data)
+    await menu_orders.rename_key(session, user.sub, MENU, menu_orders.parent_scope(folder, path), menu_orders.name_of(path), menu_orders.name_of(new))
     await _touch(session, workspace, user)
     return {"path": new}
 
@@ -441,6 +460,8 @@ async def delete_folder(
         raise _not_found("Folder")
     await store.delete_prefix(sub, f"{folder}/{path}")
     await workspace_pages.forget_under(session, store, sub, folder, path)
+    await menu_orders.forget(session, user.sub, MENU, f"{folder}/{path}")
+    await menu_orders.drop_key(session, user.sub, MENU, menu_orders.parent_scope(folder, path), menu_orders.name_of(path))
     await _touch(session, workspace, user)
     return Response(status_code=204)
 
@@ -495,5 +516,72 @@ async def rename_folder(
         src = step
     await _move(store, sub, folder, src, new, inside)
     await workspace_pages.move_under(session, folder, path, new)
+    await menu_orders.move_scope(session, user.sub, MENU, f"{folder}/{path}", f"{folder}/{new}")
+    await menu_orders.rename_key(session, user.sub, MENU, menu_orders.parent_scope(folder, path), menu_orders.name_of(path), menu_orders.name_of(new))
     await _touch(session, workspace, user)
     return {"path": new}
+
+
+@router.post("/workspaces/{workspace_id}/move")
+async def move_item(
+    workspace_id: WorkspaceId,
+    body: MoveBody,
+    request: Request,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+    store: WorkspaceStore = Depends(get_workspace_store),
+) -> dict[str, Any]:
+    """Move a file or a folder into a folder of this workspace or another of the person's."""
+    settings: Settings = request.app.state.settings
+    source = await _workspace(session, user, workspace_id)
+    target = await _workspace(session, user, body.to_workspace) if body.to_workspace else source
+    path = valid_path(body.path)
+    into = valid_path(body.to_folder) if body.to_folder.strip("/") else ""
+    sub = _sub(user)
+    src, dst = source.workspace_id, target.workspace_id
+    here = [f.path for f in await store.list(sub, src) if not workspace_pages.is_page_path(f.path)]
+    is_folder = any(p.startswith(path + "/") for p in here)
+    if not is_folder and path not in here:
+        raise _not_found("File")
+    name = menu_orders.name_of(path)
+    new = f"{into}/{name}" if into else name
+    if src == dst and new == path:
+        return {"workspace_id": dst, "path": path}
+    if src == dst and is_folder and (into == path or into.startswith(path + "/")):
+        raise HTTPException(status_code=422, detail="A folder cannot go into itself.")
+    there = here if src == dst else [f.path for f in await store.list(sub, dst) if not workspace_pages.is_page_path(f.path)]
+    if into and not any(p.startswith(into + "/") for p in there):
+        raise _not_found("Folder")
+    _no_file_above(new, there)
+    moving = [p for p in here if p == path or p.startswith(path + "/")]
+    others = [p for p in there if p not in moving] if src == dst else there
+    taken = new.lower()
+    if any(p.lower() == taken or p.lower().startswith(taken + "/") for p in others):
+        raise HTTPException(status_code=409, detail=f"{new!r} is already there.")
+    if src != dst:
+        files_there = [p for p in there if p.rsplit("/", 1)[-1] != FOLDER_MARKER]
+        files_moving = [p for p in moving if p.rsplit("/", 1)[-1] != FOLDER_MARKER]
+        if len(files_there) + len(files_moving) > settings.workspace_max_files:
+            raise HTTPException(status_code=409, detail=f"A workspace holds at most {settings.workspace_max_files} files.")
+    for old in moving:
+        data = await store.read(sub, f"{src}/{old}")
+        if data is not None:
+            to = new + old[len(path) :]
+            await store.write(sub, f"{dst}/{to}", data, content_type(to))
+    if is_folder:
+        await store.delete_prefix(sub, f"{src}/{path}")
+    else:
+        await store.delete(sub, f"{src}/{path}")
+    # The folder it left stays, even when it was the last thing in it.
+    parent = path.rsplit("/", 1)[0] if "/" in path else ""
+    if parent and not await store.list(sub, f"{src}/{parent}"):
+        await store.write(sub, f"{src}/{parent}/{FOLDER_MARKER}", b"", "text/plain")
+    await workspace_pages.move_to(session, store, sub, src, path, dst, new)
+    await menu_orders.drop_key(session, user.sub, MENU, menu_orders.parent_scope(src, path), name)
+    if is_folder:
+        await menu_orders.move_scope(session, user.sub, MENU, f"{src}/{path}", f"{dst}/{new}")
+    if src != dst:
+        await _touch(session, source, user)
+    await _touch(session, target, user)
+    return {"workspace_id": dst, "path": new}
+

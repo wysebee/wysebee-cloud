@@ -67,7 +67,7 @@ def test_healthcheck_reports_the_database_down(ui_dist):
 
 
 def test_the_build_knows_its_migration_head():
-    assert migration_head() == "0086"
+    assert migration_head() == "0087"
 
 
 @needs_db

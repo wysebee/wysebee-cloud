@@ -14,9 +14,11 @@ import { errorResponse, json } from "./http";
  *   (`/api/v1/agents/{id}/skills`), and the skills the person's AI app asks to give an agent
  *   (`/api/v1/agents/{id}/skill-requests…`, apps/cloud/skill_changes.py);
  * - `/api/v1/pages…` (2026-11-17): the rich HTML pages the person's AI app made from their
- *   workspace documents (apps/cloud/workspace_pages.py).
+ *   workspace documents (apps/cloud/workspace_pages.py);
+ * - `/api/v1/menu-orders…` (2026-11-28): the order the person dragged a menu's items into
+ *   (apps/cloud/menu_orders.py).
  */
-export const FORWARDED = ["/api/v1/workspaces", "/api/v1/tasks", "/api/v1/skills", "/api/v1/pages"];
+export const FORWARDED = ["/api/v1/workspaces", "/api/v1/tasks", "/api/v1/skills", "/api/v1/pages", "/api/v1/menu-orders"];
 
 // A task's runs are read here, from the person's data (home.ts), not sent up.
 const TASK_RUNS = /^\/api\/v1\/tasks\/[^/]+\/runs(\/|$)/;

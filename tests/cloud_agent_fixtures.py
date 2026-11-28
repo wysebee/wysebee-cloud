@@ -45,7 +45,7 @@ def me(migrated_db_url: str) -> Iterator[dict[str, str]]:
     sub = f"test-{uuid.uuid4().hex}"
     yield {"X-Test-User": sub}
     with create_engine(migrated_db_url).begin() as conn:
-        for table in ("agent_link_offers", "agent_skills", "user_skills", "agent_tools", "user_tools", "browser_calls", "browser_recordings", "browser_links", "ai_turn_counts", "relay_traffic", "mcp_hidden_agents", "user_notifications", "task_schedules", "user_task_runs", "user_agents", "user_tasks", "workspace_assistants", "user_workspaces", "cloud_config_heads", "cloud_skill_files", "users"):
+        for table in ("agent_link_offers", "agent_skills", "user_skills", "agent_tools", "user_tools", "browser_calls", "browser_recordings", "browser_links", "ai_turn_counts", "relay_traffic", "mcp_hidden_agents", "user_notifications", "task_schedules", "user_task_runs", "user_agents", "user_tasks", "workspace_assistants", "user_workspaces", "cloud_config_heads", "cloud_skill_files", "menu_orders", "users"):
             conn.execute(text(f"DELETE FROM {table} WHERE user_id = :u"), {"u": sub})
 
 
