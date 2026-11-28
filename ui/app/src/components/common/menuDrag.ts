@@ -1,4 +1,7 @@
 import { useState, type DragEvent } from "react";
+import { toast } from "sonner";
+import { ordered, placed, saveMenuOrder, useMenuOrders } from "../../menuOrders";
+import { reasonOf } from "../../workspaces";
 
 /**
  * Dragging in the menus beside the rail (2026-11-28): any row can be picked up and dropped on
@@ -6,7 +9,7 @@ import { useState, type DragEvent } from "react";
  * the pointer is on the row (its top quarter before, its bottom quarter after, its middle into;
  * a row taking only before and after splits at its half). Shared by every menu: it knows rows
  * by their key and what is dragged as the menu's own value, so Workspaces moves files and
- * folders with it while Tasks or Agents would only reorder.
+ * folders with it while Tasks and Agents only reorder (`useOrderedMenu`).
  */
 
 export type DropWhere = "before" | "after" | "into";
@@ -74,4 +77,22 @@ export function useMenuDrag<D, T>({ accepts, onDrop }: MenuDragOptions<D, T>) {
   const markOf = (key: string) => (over?.key === key ? dropMark[over.where] : "");
 
   return { source, target, markOf, dragging: dragging?.value ?? null };
+}
+
+/**
+ * A flat menu's dragging (Tasks, Agents; 2026-11-28): its `items` in the order the person
+ * dragged them into under `menu` (scope ""), any not in it after, as they came; `row(key)` gives
+ * a row's props — picked up, dropped on before or after another (which keeps the new order) —
+ * and `markOf(key)` its line while something is over it.
+ */
+export function useOrderedMenu<T>(menu: string, items: T[], keyOf: (item: T) => string) {
+  const orders = useMenuOrders(menu);
+  const shown = ordered(items, keyOf, orders[""]);
+  const drag = useMenuDrag<string, string>({
+    accepts: () => ["before", "after"],
+    onDrop: (key, beside, where) =>
+      void saveMenuOrder(menu, "", placed(shown.map(keyOf), key, beside, where as "before" | "after")).catch((e) => toast.error(reasonOf(e))),
+  });
+  const row = (key: string) => ({ ...drag.source(key, key), ...drag.target(key, key) });
+  return { items: shown, row, markOf: drag.markOf };
 }

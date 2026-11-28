@@ -39,7 +39,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.cloud import agent_types, changes, tool_kinds, user_tools
+from apps.cloud import agent_types, changes, menu_orders, tool_kinds, user_tools
 from apps.cloud.auth import User, current_user
 from apps.cloud.config import Settings
 from apps.cloud.deps import get_session
@@ -305,6 +305,7 @@ async def delete_agent(agent_id: str = AgentId, user: User = Depends(current_use
         raise HTTPException(status_code=400, detail="Wysebee's own agent cannot be deleted.")
     # Its device hears on its next poll; its links to skills and tools go with it (cascade).
     await browser_links.delete_for_agent(session, user.sub, row.agent_id)
+    await menu_orders.drop_key(session, user.sub, "agents", "", row.agent_id)
     await _bump(session, user.sub)
     await session.delete(row)
     await session.commit()

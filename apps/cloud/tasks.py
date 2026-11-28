@@ -33,7 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.cloud import changes
+from apps.cloud import changes, menu_orders
 from apps.cloud.auth import User, current_user
 from apps.cloud.deps import get_session
 from apps.cloud.models import TaskSchedule, UserTask
@@ -181,8 +181,10 @@ async def save(
 
 
 async def remove(session: AsyncSession, user_id: str, task: UserTask) -> None:
-    """Delete it — its schedule and runs with it — after bumping the person's revision."""
+    """Delete it — its schedule and runs with it, and its place in the Tasks menu's order —
+    after bumping the person's revision."""
     await changes.bump(session, user_id)
+    await menu_orders.drop_key(session, user_id, "tasks", "", task.task_id)
     await session.delete(task)
 
 

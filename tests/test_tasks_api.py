@@ -80,6 +80,9 @@ def test_a_task_is_changed_and_renamed_by_id(client: TestClient, me: dict[str, s
 
 def test_deleting_a_task_deletes_its_schedule_and_runs(client: TestClient, me: dict[str, str]) -> None:
     made = make(client, me, "Hourly", trigger=HOURLY)
+    kept = make(client, me, "Kept")
+    order = {"scope": "", "keys": [made["id"], kept["id"]]}
+    assert client.put("/api/v1/menu-orders/tasks", json=order, headers=me).status_code == 200
 
     async def ran() -> None:
         async with client.app.state.db.sessionmaker() as session:
@@ -91,6 +94,8 @@ def test_deleting_a_task_deletes_its_schedule_and_runs(client: TestClient, me: d
     assert client.delete(f"{BASE}/{made['id']}", headers=me).status_code == 204
     assert client.get("/api/v1/task-schedules", headers=me).json()["schedules"] == {}
     assert client.get(f"/api/v1/data/task_runs?task_id={made['id']}", headers=me).json()["rows"] == []
+    # Its place in the Tasks menu's order goes with it.
+    assert client.get("/api/v1/menu-orders/tasks", headers=me).json()["orders"] == {"": [kept["id"]]}
     assert client.delete(f"{BASE}/{made['id']}", headers=me).status_code == 404
 
 

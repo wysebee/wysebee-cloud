@@ -2,12 +2,13 @@
 
 The menus beside the rail list their items by name until the person drags them into an order of
 their own; that order is kept here, one list per menu and scope (``MenuOrder``, migration 0087).
-It is the same for every menu, so a menu that gains dragging (Tasks, Agents) only names its
-scopes and keys:
+It is the same for every menu, so a menu that gains dragging only names its scopes and keys:
 
 - ``workspaces``: scope ``""`` holds the workspaces' ids; ``<workspace id>`` its top folder's
   items by name, and ``<workspace id>/<folder path>`` a folder's. A folder's items keep folders
   before files whatever the order; that is the menu's rule, not this store's.
+- ``tasks``: scope ``""`` holds the person's task ids (apps/cloud/tasks.py).
+- ``agents``: scope ``""`` holds the person's agent ids (apps/cloud/agents.py).
 
 The routes:
 
@@ -18,7 +19,8 @@ The routes:
 
 The lists only order: a key no item has any more is passed over, and an item no list names
 follows the named ones, by name. Renaming, moving or deleting an item keeps its lists in step
-where the item's own code calls the helpers below (apps/cloud/workspaces.py).
+where the item's own code calls the helpers below (apps/cloud/workspaces.py; a task's or an
+agent's deletion drops its key).
 """
 
 from typing import Annotated, Any

@@ -7,6 +7,7 @@ import { AgentAvatar } from "./common/AgentAvatar";
 import { agentDevice, DeviceIcon } from "./common/DeviceIcon";
 import { presenceOf, useLinks } from "../presence";
 import { AddAgentDialog } from "./AddAgentDialog";
+import { useOrderedMenu } from "./common/menuDrag";
 
 // The rail's own purple (Sidebar.tsx), white on it, a light line between the two.
 const row = "flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1 text-left text-sm text-white/85 hover:bg-white/10";
@@ -17,7 +18,9 @@ const activeRow = "bg-white/20 font-medium text-white hover:bg-white/20";
  * **All agents** first (their list, `#/agents`, 2026-11-20 — like the Devices menu), then a row per
  * agent — Wysebee first, then the person's own — each opening that agent's settings, with a +
  * (and "Add an agent") that adds one (AddAgentDialog). There is no chat (2026-11-14, the
- * person's call): an agent's tools are reached from an AI app, through Wysebee Assistant.
+ * person's call): an agent's tools are reached from an AI app, through Wysebee Assistant. The
+ * agents can be dragged into an order of the person's own (2026-11-28, `useOrderedMenu`); any
+ * not in it follow, as listed.
  */
 export function AgentsNav({
   selected,
@@ -32,6 +35,7 @@ export function AgentsNav({
   const agents = useAgents();
   const links = useLinks();
   const [addingAgent, setAddingAgent] = useState(false);
+  const menu = useOrderedMenu("agents", agents.items ?? [], (agent) => agent.id);
   const shown = selected === null ? null : agentNamed(agents.items ?? [], selected)?.id;
 
   // Read now, and again when the window comes back: an agent added elsewhere shows without
@@ -70,10 +74,10 @@ export function AgentsNav({
           </button>
         </li>
         {agents.error && <li className="px-2 text-xs text-red-100">{agents.error}</li>}
-        {(agents.items ?? []).map((agent) => {
+        {menu.items.map((agent) => {
           const device = agentDevice(agent.browser, agent.device);
           return (
-            <li key={agent.id}>
+            <li key={agent.id} className={cn("rounded-md", menu.markOf(agent.id))} {...menu.row(agent.id)}>
               <button
                 type="button"
                 className={cn(row, "text-base", shown === agent.id && activeRow)}
