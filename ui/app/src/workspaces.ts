@@ -12,6 +12,7 @@ import {
   deleteWorkspace,
   deleteWorkspaceFile,
   deleteWorkspaceFolder,
+  renameWorkspaceFile,
   renameWorkspaceFolder,
   fetchWorkspace,
   fetchWorkspaces,
@@ -109,6 +110,13 @@ export async function addFolder(id: string, path: string): Promise<void> {
 export async function removeFolder(id: string, path: string): Promise<void> {
   await deleteWorkspaceFolder(id, path);
   await loadTree(id);
+}
+
+/** Rename a file where it is; its new path. */
+export async function renameFile(id: string, path: string, name: string): Promise<string> {
+  const renamed = await renameWorkspaceFile(id, path, name);
+  await loadTree(id);
+  return renamed.path;
 }
 
 /** Rename a folder where it is; its new path. */

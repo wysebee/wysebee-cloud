@@ -327,6 +327,59 @@ describe("WorkspacesNav", () => {
     await waitFor(() => expect(onSelect).toHaveBeenLastCalledWith("p1"));
   });
 
+  it("renames a file or page in place when its name is double-clicked, opening it there", async () => {
+    let renamed: string | null = null;
+    const files = () => [{ path: "README.md", size: 9 }, { path: "guide/setup.md", size: 5 }, { path: renamed === "q4" ? "q4.html" : "sales.html", size: 5 }];
+    const { f, onSelect } = setup("p1", null, {
+      "GET /api/v1/workspaces/p1": () => ({ ...tree, files: files().map((x) => (renamed === "Intro" && x.path === "README.md" ? { ...x, path: "Intro.md" } : x)) }),
+      "PATCH /api/v1/workspaces/p1/files/README.md": (r: FakeRequest) => {
+        const name = (r.body as { name: string }).name;
+        if (name === "guide.md") return reply(409, { detail: "'guide.md' is already there." });
+        renamed = "Intro";
+        return { path: name };
+      },
+      "PATCH /api/v1/workspaces/p1/files/sales.html": () => {
+        renamed = "q4";
+        return { path: "q4.html" };
+      },
+    });
+    const toastError = vi.spyOn(toast, "error");
+    // A document: double-clicked, its first click opens it, the second names it.
+    await userEvent.dblClick(await screen.findByRole("button", { name: "README.md" }));
+    expect(onSelect).toHaveBeenLastCalledWith("p1", "README.md");
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    const field = () => screen.getByRole("textbox", { name: "Rename README.md" });
+    expect((field() as HTMLInputElement).value).toBe("README.md");
+    // Escape keeps it; its own name or none, nothing is asked.
+    await userEvent.type(field(), "{Escape}");
+    expect(screen.queryByRole("textbox", { name: "Rename README.md" })).toBeNull();
+    await userEvent.dblClick(screen.getByRole("button", { name: "README.md" }));
+    fireEvent.submit(field().closest("form")!);
+    await userEvent.dblClick(screen.getByRole("button", { name: "README.md" }));
+    await userEvent.clear(field());
+    fireEvent.blur(field());
+    expect(f.to("PATCH /api/v1/workspaces/p1/files/README.md")).toHaveLength(0);
+    // Taken: said, the field stays. A name with no extension is a document's: ".md" added.
+    await userEvent.dblClick(screen.getByRole("button", { name: "README.md" }));
+    await userEvent.clear(field());
+    await userEvent.type(field(), "guide.md{Enter}");
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("'guide.md' is already there."));
+    await userEvent.clear(field());
+    await userEvent.type(field(), "Intro{Enter}");
+    await waitFor(() => expect(onSelect).toHaveBeenLastCalledWith("p1", "Intro.md"));
+    expect(f.to("PATCH /api/v1/workspaces/p1/files/README.md").map((r) => r.body)).toEqual([{ name: "guide.md" }, { name: "Intro.md" }]);
+    expect(await screen.findByRole("button", { name: "Intro.md" })).toBeTruthy();
+    // A page: named by its name alone, it stays a page.
+    await userEvent.dblClick(screen.getByRole("button", { name: "sales" }));
+    const page = screen.getByRole("textbox", { name: "Rename sales.html" });
+    expect((page as HTMLInputElement).value).toBe("sales");
+    await userEvent.clear(page);
+    await userEvent.type(page, "q4{Enter}");
+    await waitFor(() => expect(onSelect).toHaveBeenLastCalledWith("p1", "q4.html"));
+    expect(f.to("PATCH /api/v1/workspaces/p1/files/sales.html")[0].body).toEqual({ name: "q4.html" });
+    expect((await screen.findByRole("button", { name: "q4" })).getAttribute("title")).toBe("Double-click to rename");
+  });
+
   it("deletes a folder another file is open beside without leaving it", async () => {
     const { onSelect } = setup("p1", "README.md");
     await screen.findByRole("button", { name: "guide" });

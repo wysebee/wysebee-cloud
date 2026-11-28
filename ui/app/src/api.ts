@@ -1350,6 +1350,11 @@ export async function deleteWorkspaceFolder(id: string, path: string): Promise<v
   return authedDelete(`${workspaceUrl(id)}/folders/${workspacePath(path)}`);
 }
 
+/** Rename a file where it is (2026-11-28): its page, and any link to it, stay the same; its new path. */
+export async function renameWorkspaceFile(id: string, path: string, name: string): Promise<{ path: string }> {
+  return authedPut(`${workspaceUrl(id)}/files/${workspacePath(path)}`, { name }, "PATCH");
+}
+
 /** Rename a folder where it is (2026-11-28): what it holds moves with it; its new path. */
 export async function renameWorkspaceFolder(id: string, path: string, name: string): Promise<{ path: string }> {
   return authedPut(`${workspaceUrl(id)}/folders/${workspacePath(path)}`, { name }, "PATCH");

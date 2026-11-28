@@ -25,6 +25,10 @@ file, ``README.md``, so the folder exists from the start; an empty folder holds 
   ``{path, size}``. At most ``WYSEBEE_WORKSPACE_FILE_MAX_BYTES`` (413); a new file past
   ``WYSEBEE_WORKSPACE_MAX_FILES`` is a 409.
 - ``DELETE /workspaces/{id}/files/{path}`` — 204.
+- ``PATCH /workspaces/{id}/files/{path}`` ``{name}`` — renames it where it is (2026-11-28);
+  ``{path}`` the new one. Its page goes with it, the same page at the same addresses, its
+  public link too. A name taken there (a file or a folder, whatever its case) is a 409; a
+  page (``.html``) stays a page and a document stays a document (422).
 - ``POST /workspaces/{id}/folders/{path}`` — 201 ``{path}``; ``DELETE`` — 204, with all it holds.
 - ``PATCH /workspaces/{id}/folders/{path}`` ``{name}`` — renames it where it is (2026-11-28):
   everything in it moves to ``{path}`` with the new last segment, its pages with their
@@ -355,6 +359,50 @@ async def delete_file(
         await store.write(sub, f"{folder}/{parent}/{FOLDER_MARKER}", b"", "text/plain")
     await _touch(session, workspace, user)
     return Response(status_code=204)
+
+
+@router.patch("/workspaces/{workspace_id}/files/{file_path:path}")
+async def rename_file(
+    workspace_id: WorkspaceId,
+    file_path: str,
+    body: NewName,
+    user: User = Depends(current_user),
+    session: AsyncSession = Depends(get_session),
+    store: WorkspaceStore = Depends(get_workspace_store),
+) -> dict[str, Any]:
+    """Rename a file where it is; its page (and any link to it) stays the same."""
+    workspace = await _workspace(session, user, workspace_id)
+    path = valid_path(file_path)
+    name = body.name.strip()
+    if "/" in name:
+        raise HTTPException(status_code=422, detail="A file's name has no '/' in it.")
+    parent = path.rsplit("/", 1)[0] if "/" in path else ""
+    new = valid_path(f"{parent}/{name}" if parent else name)
+    if workspace_pages.is_html(new) != workspace_pages.is_html(path):
+        raise HTTPException(status_code=422, detail="A page's name ends in .html, a document's does not: keep it what it is.")
+    sub = _sub(user)
+    folder = workspace.workspace_id
+    data = await store.read(sub, f"{folder}/{path}")
+    if data is None:
+        raise _not_found("File")
+    if new == path:
+        return {"path": path}
+    # Taken whatever its case: a store that ignores case would make the two one file.
+    taken = new.lower()
+    present = [f.path for f in await store.list(sub, folder) if not workspace_pages.is_page_path(f.path) and f.path != path]
+    if any(p.lower() == taken or p.lower().startswith(taken + "/") for p in present):
+        raise HTTPException(status_code=409, detail=f"{new!r} is already there.")
+    # A change of case alone is the same file on a store that ignores case: the old one goes
+    # first there, or deleting it would delete the new one.
+    if new.lower() == path.lower():
+        await store.delete(sub, f"{folder}/{path}")
+        await store.write(sub, f"{folder}/{new}", data, content_type(new))
+    else:
+        await store.write(sub, f"{folder}/{new}", data, content_type(new))
+        await store.delete(sub, f"{folder}/{path}")
+    await workspace_pages.move(session, folder, path, new, data)
+    await _touch(session, workspace, user)
+    return {"path": new}
 
 
 @router.post("/workspaces/{workspace_id}/folders/{folder_path:path}", status_code=201)
