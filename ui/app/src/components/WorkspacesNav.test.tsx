@@ -163,6 +163,30 @@ describe("WorkspacesNav", () => {
     expect(screen.getByRole("textbox", { name: "Workspace name" })).toBeTruthy();
   });
 
+  it("renames a workspace or a folder shown when its name is double-clicked, keeping it unfolded", async () => {
+    const { onSelect } = setup("p1", null, {
+      "PUT /api/v1/workspaces/p1": (r: FakeRequest) => workspace("p1", (r.body as { name: string }).name),
+    });
+    // The workspace shown: its first click would fold it away; the double-click renames it, unfolded.
+    const docs = await screen.findByRole("button", { name: "Docs" });
+    expect(docs.getAttribute("title")).toBe("Double-click to rename");
+    await screen.findByRole("button", { name: "guide" });
+    await userEvent.dblClick(docs);
+    const field = screen.getByRole("textbox", { name: "Rename Docs" }) as HTMLInputElement;
+    expect(field.value).toBe("Docs");
+    expect(screen.getByRole("button", { name: "guide" })).toBeTruthy();
+    expect(onSelect).not.toHaveBeenCalled();
+    await userEvent.clear(field);
+    await userEvent.type(field, "Guides{Enter}");
+    expect(await screen.findByRole("button", { name: "Guides" })).toBeTruthy();
+    // A folder shown, double-clicked: renamed, still unfolded.
+    await userEvent.click(screen.getByRole("button", { name: "guide" }));
+    expect(screen.getByRole("button", { name: "setup.md" })).toBeTruthy();
+    await userEvent.dblClick(screen.getByRole("button", { name: "guide" }));
+    expect(screen.getByRole("textbox", { name: "Rename guide" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "setup.md" })).toBeTruthy();
+  });
+
   it("renames a workspace in place from its pencil", async () => {
     const { f } = setup(null, null, {
       "PUT /api/v1/workspaces/p1": (r: FakeRequest) =>

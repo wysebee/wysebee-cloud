@@ -220,7 +220,10 @@ export function WorkspacesNav({
     }
   };
 
+  // A double-click's first click may have folded the row away (it was shown already): renaming
+  // it keeps it unfolded.
   const startRenamingFolder = (workspace: string, node: TreeNode) => {
+    setOpen((prev) => new Set(prev).add(`${workspace}/${node.path}`));
     setMenuFor(null);
     setItemName(node.name);
     setRenamingItem(`${workspace}/${node.path}`);
@@ -589,7 +592,16 @@ export function WorkspacesNav({
                   <button
                     type="button"
                     className={cn(row, "pr-8", selectedWorkspace === workspace.id && !selectedFile && !selectedFolder && activeRow)}
-                    onClick={() => openWorkspace(workspace.id)}
+                    // The second click of a double-click renames it instead, as its pencil does.
+                    onClick={(e) => {
+                      if (e.detail < 2) openWorkspace(workspace.id);
+                    }}
+                    onDoubleClick={() => {
+                      setOpen((prev) => new Set(prev).add(workspace.id));
+                      setNewName(workspace.name);
+                      setRenaming(workspace.id);
+                    }}
+                    title={t("workspaces.nav.renameHint")}
                     aria-expanded={expanded}
                     aria-current={selectedWorkspace === workspace.id && !selectedFile && !selectedFolder ? "page" : undefined}
                   >
