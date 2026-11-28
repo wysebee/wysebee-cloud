@@ -287,6 +287,46 @@ describe("WorkspacesNav", () => {
     expect(screen.getByRole("button", { name: "Handbook" }).getAttribute("title")).toBe("Double-click to rename");
   });
 
+  it("deletes a file or page from its trash when confirmed, leaving it when it was open", async () => {
+    const { f, onSelect } = setup("p1", "guide/setup.md", {
+      "DELETE /api/v1/workspaces/p1/files/sales.html": (() => {
+        let n = 0;
+        return () => (++n === 1 ? reply(500, { detail: "Boom." }) : reply(204));
+      })(),
+      "DELETE /api/v1/workspaces/p1/files/guide/setup.md": reply(204),
+      "DELETE /api/v1/workspaces/p1/files/README.md": reply(204),
+    });
+    const sales = await screen.findByRole("button", { name: "Delete sales.html" });
+    // Each row is a hover group of its own: hovering a row inside a folder shows only that
+    // row's buttons, not the folder's (which would hold every row in it).
+    const guideRow = screen.getByRole("button", { name: "guide" }).parentElement!;
+    expect(guideRow.className).toContain("group/folder");
+    expect(guideRow.closest("li")!.className).not.toContain("group/");
+    expect(within(guideRow).getByRole("button", { name: "Delete the folder guide" })).toBeTruthy();
+    expect(within(guideRow).queryByRole("button", { name: "Delete guide/setup.md" })).toBeNull();
+    expect(sales.getAttribute("title")).toBe("Delete sales.html");
+    // Asked first; kept when not.
+    const confirm = vi.spyOn(dialogs, "confirm").mockResolvedValue(false);
+    await userEvent.click(sales);
+    expect(confirm).toHaveBeenCalledWith("Delete “sales.html”? This cannot be undone.", { action: "delete" });
+    expect(f.to("DELETE /api/v1/workspaces/p1/files/sales.html")).toHaveLength(0);
+    // Refused: said. Deleted beside the file open: that file stays open.
+    confirm.mockResolvedValue(true);
+    const toastError = vi.spyOn(toast, "error");
+    await userEvent.click(sales);
+    await waitFor(() => expect(toastError).toHaveBeenCalledWith("Boom."));
+    await userEvent.click(sales);
+    await waitFor(() => expect(f.to("DELETE /api/v1/workspaces/p1/files/sales.html")).toHaveLength(2));
+    expect(onSelect).not.toHaveBeenCalled();
+    // The file open, in a folder: the folder is shown.
+    await userEvent.click(screen.getByRole("button", { name: "Delete guide/setup.md" }));
+    await waitFor(() => expect(onSelect).toHaveBeenCalledWith("p1", undefined, "guide"));
+    // The file open, at the top: the workspace is shown.
+    await userEvent.click(screen.getByRole("button", { name: "README.md" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete README.md" }));
+    await waitFor(() => expect(onSelect).toHaveBeenLastCalledWith("p1"));
+  });
+
   it("deletes a folder another file is open beside without leaving it", async () => {
     const { onSelect } = setup("p1", "README.md");
     await screen.findByRole("button", { name: "guide" });

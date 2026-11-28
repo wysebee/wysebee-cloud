@@ -12,6 +12,7 @@
       "none": "Aucun espace de travail pour l’instant.",
       "deleteFolder": "Supprimer le dossier {{name}}",
       "deleteFolderConfirm": "Supprimer le dossier « {{name}} » et tout son contenu ? Cette action est irréversible.",
+      "deleteFile": "Supprimer {{name}}",
       "addIn": "Ajouter dans {{name}}",
       "newDocument": "Nouveau document",
       "newPage": "Nouvelle page",

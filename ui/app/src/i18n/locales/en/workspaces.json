@@ -12,6 +12,7 @@
       "none": "No workspaces yet.",
       "deleteFolder": "Delete the folder {{name}}",
       "deleteFolderConfirm": "Delete the folder “{{name}}” and everything in it? This cannot be undone.",
+      "deleteFile": "Delete {{name}}",
       "addIn": "Add to {{name}}",
       "newDocument": "New document",
       "newPage": "New page",

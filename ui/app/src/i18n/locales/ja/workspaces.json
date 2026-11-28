@@ -12,6 +12,7 @@
       "none": "ワークスペースはまだありません。",
       "deleteFolder": "フォルダー {{name}} を削除",
       "deleteFolderConfirm": "フォルダー「{{name}}」とその中身をすべて削除しますか？元に戻せません。",
+      "deleteFile": "{{name}} を削除",
       "addIn": "{{name}} に追加",
       "newDocument": "新しいドキュメント",
       "newPage": "新しいページ",

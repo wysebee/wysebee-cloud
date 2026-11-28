@@ -13,6 +13,7 @@ import {
   loadTree,
   pagePath,
   reasonOf,
+  removeFile,
   removeFolder,
   renameFolder,
   renameWorkspace,
@@ -246,6 +247,21 @@ export function WorkspacesNav({
     }
   };
 
+  // A file or page deleted from the menu; the one open leaves for the folder it was in.
+  const deleteFile = async (workspace: string, path: string) => {
+    if (!(await dialogs.confirm(t("workspaces.editor.deleteConfirm", { name: path }), { action: "delete" }))) return;
+    try {
+      await removeFile(workspace, path);
+      if (selectedWorkspace === workspace && selectedFile === path) {
+        const parent = path.slice(0, Math.max(0, path.lastIndexOf("/")));
+        if (parent) onSelect(workspace, undefined, parent);
+        else onSelect(workspace);
+      }
+    } catch (e) {
+      toast.error(reasonOf(e));
+    }
+  };
+
   const deleteFolder = async (workspace: string, path: string) => {
     if (!(await dialogs.confirm(t("workspaces.nav.deleteFolderConfirm", { name: path }), { action: "delete" }))) return;
     try {
@@ -264,10 +280,10 @@ export function WorkspacesNav({
       if (node.kind === "file") {
         const active = selectedWorkspace === workspace && selectedFile === node.path;
         return (
-          <li key={key}>
+          <li key={key} className="group/file relative">
             <button
               type="button"
-              className={cn(row, active && activeRow)}
+              className={cn(row, "pr-8", active && activeRow)}
               style={indent}
               onClick={() => onSelect(workspace, node.path)}
               aria-current={active ? "page" : undefined}
@@ -280,6 +296,16 @@ export function WorkspacesNav({
               {/* A page shows by its name alone: "sales", not "sales.html". */}
               <span className="truncate">{isHtmlPage(node.path) ? node.name.replace(/\.html$/i, "") : node.name}</span>
             </button>
+            <button
+              type="button"
+              className={cn(hoverBtn, "right-1 group-hover/file:opacity-100")}
+              onClick={() => void deleteFile(workspace, node.path)}
+              aria-label={t("workspaces.nav.deleteFile", { name: node.path })}
+              title={t("workspaces.nav.deleteFile", { name: node.path })}
+              data-track="Workspaces delete file in menu"
+            >
+              <Trash2 size={13} aria-hidden />
+            </button>
           </li>
         );
       }
@@ -290,8 +316,11 @@ export function WorkspacesNav({
       const renamingThis = renamingFolder === key;
       const childIndent = { paddingLeft: `${0.5 + (depth + 1) * 0.85}rem` };
       return (
-        <li key={key} className="group/folder relative">
-          <div className="relative">
+        <li key={key} className="relative">
+          {/* The hover group is the folder's own row, not its <li>: what it holds is inside the
+              <li>, and hovering that must not show this folder's buttons (nor a folder's
+              inside it). */}
+          <div className="group/folder relative">
             {renamingThis ? (
               <form
                 className="flex items-center gap-1.5 py-0.5 pr-2"

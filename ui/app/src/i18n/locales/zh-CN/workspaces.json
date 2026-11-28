@@ -12,6 +12,7 @@
       "none": "还没有工作区。",
       "deleteFolder": "删除文件夹 {{name}}",
       "deleteFolderConfirm": "删除文件夹“{{name}}”及其中的所有内容？此操作无法撤销。",
+      "deleteFile": "删除 {{name}}",
       "addIn": "添加到 {{name}}",
       "newDocument": "新建文档",
       "newPage": "新建页面",
